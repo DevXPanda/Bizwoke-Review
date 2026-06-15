@@ -3,6 +3,7 @@ import { convexAuth } from "@convex-dev/auth/server";
 import bcrypt from "bcryptjs";
 import { MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   providers: [
@@ -48,6 +49,7 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
           tempWhatsappQuota: Number(params.whatsappQuota ?? 0),
           tempWebQuota: Number(params.webQuota ?? 0),
           tempAmount: Number(params.amount ?? 0),
+          pricingPackageId: (params.pricingPackageId as string) ?? "",
         };
       },
     }),
@@ -85,6 +87,51 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       const actKey = Math.floor(Math.random() * 1000000).toString();
       const actKeyHash = bcrypt.hashSync(actKey, 10);
 
+      let smsQuota = profile.tempSmsQuota ?? 0;
+      let emailQuota = profile.tempEmailQuota ?? 0;
+      let whatsappQuota = profile.tempWhatsappQuota ?? 0;
+      let webQuota = profile.tempWebQuota ?? 0;
+      let amount = profile.tempAmount ?? 0;
+      let parsedPackageId: Id<"pricing"> | undefined = undefined;
+      let trialStartDate = undefined;
+      let trialEndDate = undefined;
+      let trialStatus = undefined;
+
+      const profilePackageId = profile.pricingPackageId;
+      if (profilePackageId && typeof profilePackageId === "string" && profilePackageId !== "") {
+        try {
+          const pkg = await ctx.db.get(profilePackageId as Id<"pricing">);
+          if (pkg) {
+            amount = pkg.price ?? 0;
+            parsedPackageId = pkg._id;
+            trialStartDate = Date.now();
+            trialEndDate = Date.now() + 3 * 24 * 60 * 60 * 1000;
+            trialStatus = "active";
+
+            // Dynamic quota mapping
+            const nameLower = pkg.packageName.toLowerCase();
+            if (nameLower.includes("plus") || pkg.price >= 9000) {
+              smsQuota = 20;
+              emailQuota = 20;
+              whatsappQuota = 20;
+              webQuota = 20;
+            } else if (nameLower.includes("premium") || nameLower.includes("gold") || pkg.price >= 5000) {
+              smsQuota = 10;
+              emailQuota = 10;
+              whatsappQuota = 10;
+              webQuota = 10;
+            } else {
+              smsQuota = 0;
+              emailQuota = 5;
+              whatsappQuota = 5;
+              webQuota = 5;
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
       // Create new user in Convex DB
       const userId = await ctx.db.insert("users", {
         email: profile.email,
@@ -104,18 +151,22 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         formKey: formKey,
         frameId: "",
         latestActivity: new Date().toUTCString(),
+        pricingPackageId: parsedPackageId,
+        trialStartDate,
+        trialEndDate,
+        trialStatus,
       });
 
       // Initialize Quota
       await ctx.db.insert("quota", {
         byUserId: userId,
-        smsQuota: profile.tempSmsQuota ?? 0,
-        emailQuota: profile.tempEmailQuota ?? 0,
-        whatsappQuota: profile.tempWhatsappQuota ?? 0,
-        webQuota: profile.tempWebQuota ?? 0,
+        smsQuota: smsQuota,
+        emailQuota: emailQuota,
+        whatsappQuota: whatsappQuota,
+        webQuota: webQuota,
         byFormKey: formKey,
-        amount: profile.tempAmount ?? 0,
-        balance: profile.tempAmount ?? 0,
+        amount: amount,
+        balance: amount,
       });
 
       // Create company details if admin
@@ -142,6 +193,23 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         email: profile.email,
         code: actKey,
       });
+
+      // Schedule welcome trial email dispatch
+      if (parsedPackageId) {
+        const pkg = await ctx.db.get(parsedPackageId);
+        if (pkg) {
+          await ctx.scheduler.runAfter(0, internal.email.sendWelcomeTrialEmail, {
+            email: profile.email,
+            packageName: pkg.packageName,
+            trialEndDate: trialEndDate!,
+            smsQuota,
+            emailQuota,
+            whatsappQuota,
+            webQuota,
+            maxUsers: pkg.maxUsers,
+          });
+        }
+      }
 
       return userId;
     },

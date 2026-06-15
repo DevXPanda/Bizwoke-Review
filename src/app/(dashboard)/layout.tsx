@@ -18,7 +18,8 @@ import {
   Settings,
   LogOut,
   AlertTriangle,
-  Globe
+  Globe,
+  CreditCard,
 } from "lucide-react";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -74,6 +75,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       { name: "My Account", href: "/account", icon: User },
       { name: "Report", href: "/report", icon: BarChart },
       { name: "Plans", href: "/admin/plans", icon: FileText },
+      { name: "Pricing Management", href: "/admin/pricing", icon: CreditCard },
       { name: "Logs", href: "/admin/logs", icon: ClipboardList },
       { name: "Support", href: "/support", icon: HelpCircle },
       { name: "Settings", href: "/admin/settings", icon: Settings }

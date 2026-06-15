@@ -27,7 +27,7 @@ export default function RegisterPage() {
   // Queries for duplicates
   const dupUnameCount = useQuery(api.users.checkDuplicateUsername, { uname });
   const dupCmpyCount = useQuery(api.users.checkDuplicateCompany, { cmpy });
-  const plans = useQuery(api.plans.getPlans);
+  const packages = useQuery(api.pricing.getActivePricingPackages);
 
   const generatePassword = () => {
     const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
@@ -38,7 +38,7 @@ export default function RegisterPage() {
     setPwd(generated);
   };
 
-  const selectedPlan = plans?.find((p) => p._id === selectedPlanId);
+  const selectedPlan = packages?.find((p) => p._id === selectedPlanId);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,16 +87,15 @@ export default function RegisterPage() {
         lname,
         mobile,
         isCompanyAdmin: isCompany,
-        smsQuota: selectedPlan.smsQuota,
-        emailQuota: selectedPlan.emailQuota,
-        whatsappQuota: selectedPlan.whatsappQuota,
-        webQuota: selectedPlan.webQuota,
-        amount: Number(selectedPlan.amount),
+        pricingPackageId: selectedPlan._id,
       };
 
       if (isCompany && cmpy) {
         signUpFields.cmpy = cmpy;
       }
+
+      sessionStorage.setItem("newReg", "1");
+      sessionStorage.setItem("newRegPkg", selectedPlan.packageName);
 
       await signIn("password", signUpFields);
 
@@ -261,7 +260,7 @@ export default function RegisterPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {plans?.map((p) => (
+            {packages?.map((p) => (
               <div
                 key={p._id}
                 onClick={() => setSelectedPlanId(p._id)}
@@ -271,9 +270,9 @@ export default function RegisterPage() {
                     : "border-gray-300 hover:border-[#294a63]"
                 }`}
               >
-                <h5 className="font-bold text-gray-800 text-sm">{p.name}</h5>
+                <h5 className="font-bold text-gray-800 text-sm">{p.packageName}</h5>
                 <h6 className="text-xs font-bold text-gray-600 mt-1">
-                  Rs <span className="text-base text-gray-900 font-extrabold">{p.amount}</span> {p.per}
+                  Rs <span className="text-base text-gray-900 font-extrabold">{p.price}</span> / {p.billingType}
                 </h6>
                 <button
                   type="button"
@@ -285,12 +284,11 @@ export default function RegisterPage() {
                 >
                   {selectedPlanId === p._id ? "Current Plan" : "Choose Plan"}
                 </button>
-                <ul className="text-left text-xs text-gray-600 mt-4 space-y-1 divide-y divide-gray-100">
-                  <li className="pt-1">{p.smsQuota} SMS Quota</li>
-                  <li className="pt-1">{p.emailQuota} Email Quota</li>
-                  <li className="pt-1">{p.whatsappQuota} WhatsApp Quota</li>
-                  <li className="pt-1">{p.webQuota} Website Quota</li>
-                  {isCompany && <li className="pt-1 text-[#294a63] font-bold">Unlimited Users</li>}
+                <ul className="text-left text-xs text-gray-655 mt-4 space-y-1 divide-y divide-gray-100">
+                  <li className="pt-1 text-[#294a63] font-bold">{p.maxUsers} Max Users</li>
+                  {p.featuresList.map((f, i) => (
+                    <li key={i} className="pt-1 truncate" title={f}>{f}</li>
+                  ))}
                 </ul>
               </div>
             ))}

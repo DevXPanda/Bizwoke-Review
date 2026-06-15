@@ -11,6 +11,7 @@ export default defineSchema({
     active: v.number(), // 1 = Active, 0 = Inactive
     cmpyName: v.optional(v.string()), // Company branding for the branch
     deleted: v.optional(v.boolean()), // Soft-delete flag
+    pricingPackageId: v.optional(v.id("pricing")),
   })
     .index("by_code", ["code"])
     .index("by_deleted", ["deleted"]),
@@ -50,6 +51,12 @@ export default defineSchema({
     
     // RBAC branch relation
     branchId: v.optional(v.id("branches")),
+
+    // Trial and pricing integration
+    pricingPackageId: v.optional(v.id("pricing")),
+    trialStartDate: v.optional(v.number()),
+    trialEndDate: v.optional(v.number()),
+    trialStatus: v.optional(v.string()),
   })
     .index("email", ["email"])
     .index("phone", ["phone"])
@@ -199,4 +206,20 @@ export default defineSchema({
     .index("by_formKey", ["formKey"])
     .index("by_frameId", ["frameId"])
     .index("by_branchId", ["branchId"]), // FrameId index on websites
+
+  pricing: defineTable({
+    packageName: v.string(),
+    category: v.string(),
+    price: v.number(),
+    billingType: v.string(), // e.g. "Monthly" | "Yearly" | "Lifetime"
+    featuresList: v.array(v.string()), // dynamic features list
+    displayOrder: v.number(),
+    popularBadge: v.boolean(),
+    status: v.string(), // "active" | "inactive"
+    maxUsers: v.number(),
+    createdAt: v.number(), // epoch timestamp
+    updatedAt: v.number(), // epoch timestamp
+  })
+    .index("by_status", ["status"])
+    .index("by_displayOrder", ["displayOrder"]),
 });

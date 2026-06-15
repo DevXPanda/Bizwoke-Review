@@ -4,6 +4,7 @@ import { logger } from "@/utils/logger";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { 
   Star, 
   MessageSquare, 
@@ -31,9 +32,40 @@ import QRCode from "qrcode";
 import { Id } from "../../../../convex/_generated/dataModel";
 
 export default function DashboardPage() {
+  const router = useRouter();
   const data = useQuery(api.reviews.getDashboardData);
   const generateFrameMutation = useMutation(api.reviews.generateFrame);
   const currentUser = useQuery(api.users.currentUser);
+
+  const [timeLeft, setTimeLeft] = useState<string>("");
+
+  useEffect(() => {
+    if (data?.user?.trialStatus === "active" && data?.user?.trialEndDate) {
+      const updateTimer = () => {
+        const diff = data.user.trialEndDate - Date.now();
+        if (diff <= 0) {
+          setTimeLeft("Expired");
+          return;
+        }
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+        let parts = [];
+        if (days > 0) parts.push(`${days}d`);
+        if (hours > 0 || days > 0) parts.push(`${hours}h`);
+        parts.push(`${minutes}m`);
+        parts.push(`${seconds}s`);
+
+        setTimeLeft(parts.join(" "));
+      };
+
+      updateTimer();
+      const interval = setInterval(updateTimer, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [data]);
 
   const normalizeRole = (role: string | undefined, sadmin?: number, admin?: number) => {
     if (role === "SUPER_ADMIN" || role === "sadmin" || sadmin === 1) {
@@ -186,6 +218,11 @@ export default function DashboardPage() {
               <CheckCircle className="w-3.5 h-3.5 mr-1" />
               Active Subscription
             </span>
+          ) : user.trialStatus === "active" && user.trialEndDate && Date.now() <= user.trialEndDate ? (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+              <Clock className="w-3.5 h-3.5 mr-1" />
+              Free Trial Active
+            </span>
           ) : (
             <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
               <AlertTriangle className="w-3.5 h-3.5 mr-1" />
@@ -194,6 +231,35 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Trial Countdown Banner */}
+      {user.trialStatus === "active" && user.trialEndDate && Date.now() <= user.trialEndDate && (
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50/85 border border-amber-200/60 p-4 rounded-xl shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-scale-in">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 bg-amber-100/60 text-amber-700 rounded-lg shadow-inner">
+              <Clock className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <h4 className="font-bold text-gray-800 text-sm">Free Trial Period Active</h4>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Your 3-day trial will end soon. Upgrade your package to avoid service interruptions.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-4 self-stretch sm:self-auto justify-between border-t sm:border-t-0 border-gray-150 pt-2 sm:pt-0">
+            <div className="text-left sm:text-right">
+              <span className="text-[10px] uppercase font-bold text-amber-600 tracking-wider block">Trial Countdown</span>
+              <span className="text-sm font-extrabold text-amber-750 font-mono tracking-tight">{timeLeft || "calculating..."}</span>
+            </div>
+            <button
+              onClick={() => router.push("/admin/pricing")}
+              className="bg-amber-600 hover:bg-amber-750 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg transition-colors shadow-sm"
+            >
+              Upgrade Now
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Super Admin Branch Overview Bar */}
       {currentRole === "SUPER_ADMIN" && branchSummary && branchSummary.length > 0 && (
@@ -828,6 +894,16 @@ function BranchDetailDrawer({ branchId, onClose }: BranchDetailDrawerProps) {
                       >
                         {overview.active ? "Active" : "Inactive"}
                       </span>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <span className="block text-gray-400 font-medium">Pricing Plan</span>
+                      <strong className="text-gray-800 text-sm">{overview.planName || "No Plan"}</strong>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <span className="block text-gray-400 font-medium">Branch User Limit</span>
+                      <strong className="text-gray-800 text-sm">
+                        {overview.maxUsers !== undefined ? `${overview.maxUsers} user(s)` : "Unlimited"}
+                      </strong>
                     </div>
                     <div className="bg-gray-50 p-3 rounded-lg col-span-2">
                       <span className="block text-gray-400 font-medium">Company Branding Name</span>

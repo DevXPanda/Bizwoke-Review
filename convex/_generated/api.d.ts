@@ -16,6 +16,7 @@ import type * as companies from "../companies.js";
 import type * as email from "../email.js";
 import type * as http from "../http.js";
 import type * as plans from "../plans.js";
+import type * as pricing from "../pricing.js";
 import type * as quota from "../quota.js";
 import type * as razorpay from "../razorpay.js";
 import type * as reviews from "../reviews.js";
@@ -38,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   email: typeof email;
   http: typeof http;
   plans: typeof plans;
+  pricing: typeof pricing;
   quota: typeof quota;
   razorpay: typeof razorpay;
   reviews: typeof reviews;

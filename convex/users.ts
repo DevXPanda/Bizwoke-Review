@@ -3,11 +3,64 @@ import { mutation, query } from "./_generated/server";
 import bcrypt from "bcryptjs";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internal } from "./_generated/api";
-import { validateUser, enforceRoles, enforceWriteAccess, getBranchFilterId, enforceBranchAccess, normalizeRole } from "./authHelpers";
+import { validateUser, enforceRoles, enforceWriteAccess, getBranchFilterId, enforceBranchAccess, normalizeRole, enforceActiveSubscriptionOrTrial } from "./authHelpers";
+import { Id } from "./_generated/dataModel";
 
 // Helper to sanitize name prefix for formKey
 function sanitizeUname(uname: string) {
   return uname.replace(/[\s.,?&]/g, "_").toLowerCase().substring(0, 5);
+}
+
+// Helper to enforce branch user limits based on pricing packages
+async function checkBranchUserLimit(
+  ctx: any,
+  branchId: Id<"branches">,
+  userIdToExempt?: Id<"users">
+) {
+  const branch = await ctx.db.get(branchId);
+  if (!branch || branch.deleted) {
+    return;
+  }
+
+  let pricingPackage = null;
+  if (branch.pricingPackageId) {
+    pricingPackage = await ctx.db.get(branch.pricingPackageId);
+  } else {
+    // Check if there is an owner assigned to this branch
+    const branchUsers = await ctx.db
+      .query("users")
+      .withIndex("by_branchId", (q: any) => q.eq("branchId", branchId))
+      .collect();
+    const owner = branchUsers.find((u: any) => normalizeRole(u.role, u.sadmin, u.admin) === "BRANCH_ADMIN");
+    if (owner && owner.pricingPackageId) {
+      pricingPackage = await ctx.db.get(owner.pricingPackageId);
+    }
+  }
+
+  if (!pricingPackage || pricingPackage.status !== "active") {
+    return; // No active package, no limit enforced
+  }
+
+  const maxUsers = pricingPackage.maxUsers;
+
+  // Count all users currently assigned to this branch
+  const users = await ctx.db
+    .query("users")
+    .withIndex("by_branchId", (q: any) => q.eq("branchId", branchId))
+    .collect();
+
+  const currentUsersCount = users.length;
+
+  // If we are editing, check if user is already in this branch
+  const isExemptIncluded = userIdToExempt && users.some((u: any) => u._id === userIdToExempt);
+
+  const effectiveCount = isExemptIncluded ? currentUsersCount - 1 : currentUsersCount;
+
+  if (effectiveCount >= maxUsers) {
+    throw new Error(
+      `Branch user limit reached. This branch's assigned plan "${pricingPackage.packageName}" allows a maximum of ${maxUsers} user(s).`
+    );
+  }
 }
 
 // Queries
@@ -117,6 +170,10 @@ export const register = mutation({
         .filter((q) => q.eq(q.field("cmpy"), args.cmpy))
         .first();
       if (dupCmpy) throw new Error("This Company already exists");
+    }
+
+    if (args.branchId) {
+      await checkBranchUserLimit(ctx, args.branchId);
     }
 
     const unameForm = sanitizeUname(args.uname);
@@ -704,9 +761,14 @@ export const updateUserSubscriptionAdmin = mutation({
   handler: async (ctx, args) => {
     const { user: caller, role: callerRole } = await enforceRoles(ctx, ["SUPER_ADMIN", "BRANCH_ADMIN"]);
     enforceWriteAccess(caller);
+    await enforceActiveSubscriptionOrTrial(ctx, caller);
 
     const targetUser = await ctx.db.get(args.userId);
     if (!targetUser) throw new Error("User not found");
+
+    if (args.branchId !== undefined && args.branchId !== targetUser.branchId) {
+      await checkBranchUserLimit(ctx, args.branchId, args.userId);
+    }
 
     if (callerRole === "BRANCH_ADMIN") {
       if (targetUser.branchId !== caller.branchId) {
@@ -1152,6 +1214,7 @@ export const createUserByAdmin = mutation({
   handler: async (ctx, args) => {
     const { user: caller, role: callerRole } = await enforceRoles(ctx, ["SUPER_ADMIN", "BRANCH_ADMIN"]);
     enforceWriteAccess(caller);
+    await enforceActiveSubscriptionOrTrial(ctx, caller);
 
     if (args.password.length < 6) {
       throw new Error("Password must be at least 6 characters long");
@@ -1190,6 +1253,10 @@ export const createUserByAdmin = mutation({
       .filter((q) => q.eq(q.field("mobile"), args.mobile))
       .first();
     if (dupMobile) throw new Error("Mobile number already exists");
+
+    if (args.branchId) {
+      await checkBranchUserLimit(ctx, args.branchId);
+    }
 
     const unameForm = args.uname.replace(/[\s.,?&]/g, "_").toLowerCase().substring(0, 5);
     const formKey = unameForm + Math.floor(Math.random() * 100000);
@@ -1322,6 +1389,7 @@ export const editUserByAdmin = mutation({
   handler: async (ctx, args) => {
     const { user: caller, role: callerRole } = await enforceRoles(ctx, ["SUPER_ADMIN", "BRANCH_ADMIN"]);
     enforceWriteAccess(caller);
+    await enforceActiveSubscriptionOrTrial(ctx, caller);
 
     const userToEdit = await ctx.db.get(args.userId);
     if (!userToEdit) throw new Error("User not found");
@@ -1365,6 +1433,10 @@ export const editUserByAdmin = mutation({
         .filter((q) => q.eq(q.field("mobile"), args.mobile))
         .first();
       if (dupMobile) throw new Error("Mobile number already exists");
+    }
+
+    if (args.branchId && args.branchId !== userToEdit.branchId) {
+      await checkBranchUserLimit(ctx, args.branchId, args.userId);
     }
 
     const updates: any = {

@@ -56,7 +56,7 @@ export default function EmailVerifyKeyPage({ params }: EmailVerifyPageProps) {
           router.push("/login");
         }, 2000);
       } else {
-        setSuccess(`Verification code sent! (Dev code: ${res.code})`);
+        setSuccess("Verification code sent! Please check your email inbox.");
       }
     } catch (err: any) {
       setError(err.message || "Failed to resend code");

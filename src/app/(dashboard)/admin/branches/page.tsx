@@ -22,6 +22,7 @@ export default function AdminBranchesPage() {
   const createBranch = useMutation(api.branches.createBranch);
   const updateBranch = useMutation(api.branches.updateBranch);
   const deleteBranch = useMutation(api.branches.deleteBranch);
+  const packages = useQuery(api.pricing.getPricingPackages);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -34,6 +35,7 @@ export default function AdminBranchesPage() {
   const [code, setCode] = useState("");
   const [active, setActive] = useState(1);
   const [cmpyName, setCmpyName] = useState("");
+  const [pricingPackageId, setPricingPackageId] = useState<string>("");
 
   if (user === undefined || branches === undefined) {
     return (
@@ -68,6 +70,7 @@ export default function AdminBranchesPage() {
     setCode("");
     setActive(1);
     setCmpyName("");
+    setPricingPackageId("");
     setEditingId(null);
     setIsOpen(false);
   };
@@ -78,6 +81,7 @@ export default function AdminBranchesPage() {
     setCode(branch.code);
     setActive(branch.active);
     setCmpyName(branch.cmpyName || "");
+    setPricingPackageId(branch.pricingPackageId || "");
     setIsOpen(true);
   };
 
@@ -99,6 +103,7 @@ export default function AdminBranchesPage() {
           code,
           active,
           cmpyName: cmpyName || undefined,
+          pricingPackageId: pricingPackageId === "" ? undefined : (pricingPackageId as any),
         });
         setSuccessMsg("Branch updated successfully");
       } else {
@@ -107,6 +112,7 @@ export default function AdminBranchesPage() {
           code,
           active,
           cmpyName: cmpyName || undefined,
+          pricingPackageId: pricingPackageId === "" ? undefined : (pricingPackageId as any),
         });
         setSuccessMsg("Branch created successfully");
       }
@@ -181,19 +187,20 @@ export default function AdminBranchesPage() {
       <div className="bg-white rounded-xl border border-gray-200/80 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
-            <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase">
+            <thead className="bg-gray-55 text-xs font-semibold text-gray-500 uppercase">
               <tr>
                 <th className="px-6 py-3.5">Branch Name</th>
                 <th className="px-6 py-3.5">Branch Code</th>
                 <th className="px-6 py-3.5">Company Branding</th>
+                <th className="px-6 py-3.5">Pricing Plan</th>
                 <th className="px-6 py-3.5">Status</th>
                 <th className="px-6 py-3.5">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-gray-700">
-              {filtered.length === 0 ? (
+               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-400">
+                  <td colSpan={6} className="px-6 py-8 text-center text-gray-400">
                     No branches found.
                   </td>
                 </tr>
@@ -203,6 +210,21 @@ export default function AdminBranchesPage() {
                     <td className="px-6 py-4 font-semibold text-gray-800">{b.name}</td>
                     <td className="px-6 py-4 text-gray-600 font-mono text-xs">{b.code}</td>
                     <td className="px-6 py-4 text-gray-500">{b.cmpyName || "Default Branding"}</td>
+                    <td className="px-6 py-4 text-xs">
+                      {(() => {
+                        const pkg = packages?.find((p) => p._id === b.pricingPackageId);
+                        return pkg ? (
+                          <div>
+                            <strong className="text-gray-800 block">{pkg.packageName}</strong>
+                            <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">
+                              Max {pkg.maxUsers} Users
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">No Plan</span>
+                        );
+                      })()}
+                    </td>
                     <td className="px-6 py-4">
                       <span
                         className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
@@ -295,6 +317,26 @@ export default function AdminBranchesPage() {
                   onChange={(e) => setCmpyName(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-[#294a63]"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">
+                  Pricing Package Plan
+                </label>
+                <select
+                  value={pricingPackageId}
+                  onChange={(e) => setPricingPackageId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-[#294a63] bg-white text-gray-700"
+                >
+                  <option value="">No Assigned Plan (Unlimited Users)</option>
+                  {(packages ?? [])
+                    .filter((p: any) => p.status === "active")
+                    .map((p: any) => (
+                      <option key={p._id} value={p._id}>
+                        {p.packageName} (₹{p.price} / {p.billingType} - Max {p.maxUsers} Users)
+                      </option>
+                    ))}
+                </select>
               </div>
 
               <div>

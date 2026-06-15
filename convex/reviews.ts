@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { validateUser, enforceRoles, enforceWriteAccess, getBranchFilterId, enforceBranchAccess } from "./authHelpers";
+import { validateUser, enforceRoles, enforceWriteAccess, getBranchFilterId, enforceBranchAccess, getAccountOwner, enforceActiveSubscriptionOrTrial } from "./authHelpers";
 
 // Platform Queries & Mutations
 export const getWebsites = query({
@@ -67,6 +67,7 @@ export const createWebsite = mutation({
   handler: async (ctx, args) => {
     const caller = await validateUser(ctx);
     enforceWriteAccess(caller);
+    await enforceActiveSubscriptionOrTrial(ctx, caller);
     const branchId = getBranchFilterId(caller);
     
     if (branchId) {
@@ -386,6 +387,7 @@ export const getDashboardData = query({
   args: {},
   handler: async (ctx) => {
     const caller = await validateUser(ctx);
+    const owner = await getAccountOwner(ctx, caller);
     const branchId = getBranchFilterId(caller);
 
     let quotaRecord = null;
@@ -513,6 +515,10 @@ export const getDashboardData = query({
         formKey: caller.formKey,
         frameId: caller.frameId,
         id: caller._id,
+        trialStatus: owner.trialStatus,
+        trialStartDate: owner.trialStartDate,
+        trialEndDate: owner.trialEndDate,
+        pricingPackageId: owner.pricingPackageId,
       },
       monthlyRatings,
     };

@@ -106,3 +106,47 @@ export async function enforceBranchAccess(
     throw new Error("Forbidden: Cross-branch access denied");
   }
 }
+
+/**
+ * Traverses to the account owner (BRANCH_ADMIN) if user is a sub-user (BRANCH_USER).
+ */
+export async function getAccountOwner(ctx: QueryCtx | MutationCtx, user: any) {
+  if (user.iscmpy === 1 && user.cmpyid) {
+    // cmpyid is parent user ID as a string, let's look it up
+    try {
+      const parentId = user.cmpyid as Id<"users">;
+      const parent = await ctx.db.get(parentId);
+      if (parent) return parent;
+    } catch (e) {
+      // fallback
+    }
+  }
+  return user;
+}
+
+/**
+ * Checks if the account owner has an active subscription or is within their 3-day free trial.
+ * Throws a SubscriptionExpired error if not active.
+ */
+export async function enforceActiveSubscriptionOrTrial(
+  ctx: QueryCtx | MutationCtx,
+  user: any
+) {
+  const role = normalizeRole(user.role, user.sadmin, user.admin);
+  if (role === "SUPER_ADMIN") {
+    return;
+  }
+
+  const owner = await getAccountOwner(ctx, user);
+  const now = Date.now();
+  const hasActiveTrial =
+    owner.trialStatus === "active" &&
+    owner.trialStartDate !== undefined &&
+    owner.trialEndDate !== undefined &&
+    now <= owner.trialEndDate;
+  const hasActiveSub = owner.sub === 1;
+
+  if (!hasActiveTrial && !hasActiveSub) {
+    throw new Error("SubscriptionExpired: Your free trial or subscription has expired. Please upgrade or renew your plan to continue.");
+  }
+}

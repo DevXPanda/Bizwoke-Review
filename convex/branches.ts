@@ -43,6 +43,7 @@ export const createBranch = mutation({
     code: v.string(),
     active: v.number(),
     cmpyName: v.optional(v.string()),
+    pricingPackageId: v.optional(v.id("pricing")),
   },
   handler: async (ctx, args) => {
     const { user } = await enforceRoles(ctx, ["SUPER_ADMIN"]);
@@ -64,6 +65,7 @@ export const createBranch = mutation({
         name: args.name,
         active: args.active,
         cmpyName: args.cmpyName,
+        pricingPackageId: args.pricingPackageId,
         deleted: undefined, // Restore
       });
       return existing._id;
@@ -74,6 +76,7 @@ export const createBranch = mutation({
       code: args.code,
       active: args.active,
       cmpyName: args.cmpyName,
+      pricingPackageId: args.pricingPackageId,
     });
   },
 });
@@ -85,6 +88,7 @@ export const updateBranch = mutation({
     code: v.string(),
     active: v.number(),
     cmpyName: v.optional(v.string()),
+    pricingPackageId: v.optional(v.id("pricing")),
   },
   handler: async (ctx, args) => {
     const { user } = await enforceRoles(ctx, ["SUPER_ADMIN"]);
@@ -111,6 +115,7 @@ export const updateBranch = mutation({
       code: args.code,
       active: args.active,
       cmpyName: args.cmpyName,
+      pricingPackageId: args.pricingPackageId,
     });
   },
 });
@@ -170,6 +175,10 @@ export const getBranchDashboardSummary = query({
         ? parseFloat((ratings.reduce((sum, r) => sum + r.star, 0) / totalReviews).toFixed(1))
         : 0;
 
+      const pricingPackage = branch.pricingPackageId
+        ? await ctx.db.get(branch.pricingPackageId)
+        : null;
+
       summary.push({
         branchId: branch._id,
         branchName: branch.name,
@@ -179,6 +188,9 @@ export const getBranchDashboardSummary = query({
         activePlatforms,
         totalUsers: users.length,
         status: branch.active === 1 ? "Active" : "Inactive",
+        pricingPackageId: branch.pricingPackageId,
+        planName: pricingPackage?.packageName || "No Plan",
+        maxUsers: pricingPackage?.maxUsers,
       });
     }
 
@@ -246,6 +258,10 @@ export const getBranchFullDetails = query({
       .withIndex("by_branchId", (q) => q.eq("branchId", args.branchId))
       .collect();
 
+    const pricingPackage = branch.pricingPackageId
+      ? await ctx.db.get(branch.pricingPackageId)
+      : null;
+
     return {
       overview: {
         id: branch._id,
@@ -254,6 +270,9 @@ export const getBranchFullDetails = query({
         createdTime: branch._creationTime,
         active: branch.active === 1,
         cmpyName: branch.cmpyName || "",
+        pricingPackageId: branch.pricingPackageId,
+        planName: pricingPackage?.packageName || "No Plan",
+        maxUsers: pricingPackage?.maxUsers,
       },
       analytics: {
         totalReviews,
