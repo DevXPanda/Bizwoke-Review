@@ -3,7 +3,7 @@ import { mutation, query } from "./_generated/server";
 import bcrypt from "bcryptjs";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internal } from "./_generated/api";
-import { validateUser, enforceRoles, enforceWriteAccess, getBranchFilterId, enforceBranchAccess, normalizeRole, enforceActiveSubscriptionOrTrial } from "./authHelpers";
+import { validateUser, enforceRoles, enforceWriteAccess, getBranchFilterId, enforceBranchAccess, normalizeRole, enforceActiveSubscriptionOrTrial, getAccountOwner } from "./authHelpers";
 import { Id } from "./_generated/dataModel";
 
 // Helper to sanitize name prefix for formKey
@@ -15,7 +15,8 @@ function sanitizeUname(uname: string) {
 async function checkBranchUserLimit(
   ctx: any,
   branchId: Id<"branches">,
-  userIdToExempt?: Id<"users">
+  userIdToExempt?: Id<"users">,
+  willBeActive: boolean = true
 ) {
   const branch = await ctx.db.get(branchId);
   if (!branch || branch.deleted) {
@@ -23,6 +24,8 @@ async function checkBranchUserLimit(
   }
 
   let pricingPackage = null;
+  let owner: any = null;
+
   if (branch.pricingPackageId) {
     pricingPackage = await ctx.db.get(branch.pricingPackageId);
   } else {
@@ -31,7 +34,7 @@ async function checkBranchUserLimit(
       .query("users")
       .withIndex("by_branchId", (q: any) => q.eq("branchId", branchId))
       .collect();
-    const owner = branchUsers.find((u: any) => normalizeRole(u.role, u.sadmin, u.admin) === "BRANCH_ADMIN");
+    owner = branchUsers.find((u: any) => normalizeRole(u.role, u.sadmin, u.admin) === "BRANCH_ADMIN");
     if (owner && owner.pricingPackageId) {
       pricingPackage = await ctx.db.get(owner.pricingPackageId);
     }
@@ -43,22 +46,34 @@ async function checkBranchUserLimit(
 
   const maxUsers = pricingPackage.maxUsers;
 
-  // Count all users currently assigned to this branch
-  const users = await ctx.db
-    .query("users")
-    .withIndex("by_branchId", (q: any) => q.eq("branchId", branchId))
-    .collect();
+  // Let's count active users under this company owner (or in this branch if no owner)
+  let activeUsersCount = 0;
 
-  const currentUsersCount = users.length;
+  if (owner) {
+    const ownerIdStr = owner._id.toString();
+    const allUsers = await ctx.db.query("users").collect();
+    const activeCompanyUsers = allUsers.filter((u: any) => {
+      if (u.active !== 1) return false;
+      if (u._id === userIdToExempt) return false;
+      const isOwner = u._id === owner._id;
+      const isChildOfOwner = u.cmpyid === ownerIdStr;
+      return isOwner || isChildOfOwner;
+    });
+    activeUsersCount = activeCompanyUsers.length;
+  } else {
+    // Fallback: count active users assigned to this branch
+    const users = await ctx.db
+      .query("users")
+      .withIndex("by_branchId", (q: any) => q.eq("branchId", branchId))
+      .collect();
+    activeUsersCount = users.filter((u: any) => u.active === 1 && u._id !== userIdToExempt).length;
+  }
 
-  // If we are editing, check if user is already in this branch
-  const isExemptIncluded = userIdToExempt && users.some((u: any) => u._id === userIdToExempt);
+  const newActiveCount = willBeActive ? activeUsersCount + 1 : activeUsersCount;
 
-  const effectiveCount = isExemptIncluded ? currentUsersCount - 1 : currentUsersCount;
-
-  if (effectiveCount >= maxUsers) {
+  if (newActiveCount > maxUsers) {
     throw new Error(
-      `Branch user limit reached. This branch's assigned plan "${pricingPackage.packageName}" allows a maximum of ${maxUsers} user(s).`
+      `UserLimitExceeded: Subscribed plan "${pricingPackage.packageName}" allows a maximum of ${maxUsers} active user(s).`
     );
   }
 }
@@ -276,6 +291,9 @@ export const emailVerify = mutation({
     }
 
     // Update active status
+    if (user.branchId) {
+      await checkBranchUserLimit(ctx, user.branchId, user._id, true);
+    }
     await ctx.db.patch(user._id, { active: 1 });
 
     await ctx.db.insert("activity", {
@@ -473,6 +491,10 @@ export const activateAccount = mutation({
       if (!targetUser || targetUser.branchId !== caller.branchId || callerRole !== "BRANCH_ADMIN") {
         throw new Error("Forbidden: Cross-branch access denied");
       }
+    }
+    const userToActivate = await ctx.db.get(args.userId);
+    if (userToActivate && userToActivate.branchId) {
+      await checkBranchUserLimit(ctx, userToActivate.branchId, args.userId, true);
     }
     await ctx.db.patch(args.userId, { active: 1 });
     return true;
@@ -766,8 +788,9 @@ export const updateUserSubscriptionAdmin = mutation({
     const targetUser = await ctx.db.get(args.userId);
     if (!targetUser) throw new Error("User not found");
 
-    if (args.branchId !== undefined && args.branchId !== targetUser.branchId) {
-      await checkBranchUserLimit(ctx, args.branchId, args.userId);
+    const targetBranchId = args.branchId !== undefined ? args.branchId : targetUser.branchId;
+    if (targetBranchId) {
+      await checkBranchUserLimit(ctx, targetBranchId, args.userId, args.active === 1);
     }
 
     if (callerRole === "BRANCH_ADMIN") {
@@ -1255,7 +1278,24 @@ export const createUserByAdmin = mutation({
     if (dupMobile) throw new Error("Mobile number already exists");
 
     if (args.branchId) {
-      await checkBranchUserLimit(ctx, args.branchId);
+      await checkBranchUserLimit(ctx, args.branchId, undefined, args.active === 1);
+    }
+
+    let cmpyIdVal = undefined;
+    let cmpyNameVal = args.cmpyName;
+    if (callerRole === "BRANCH_ADMIN") {
+      cmpyIdVal = caller._id.toString();
+      cmpyNameVal = cmpyNameVal || caller.cmpy;
+    } else if (args.branchId) {
+      const branchUsers = await ctx.db
+        .query("users")
+        .withIndex("by_branchId", (q: any) => q.eq("branchId", args.branchId))
+        .collect();
+      const bOwner = branchUsers.find((u: any) => normalizeRole(u.role, u.sadmin, u.admin) === "BRANCH_ADMIN");
+      if (bOwner) {
+        cmpyIdVal = bOwner._id.toString();
+        cmpyNameVal = cmpyNameVal || bOwner.cmpy;
+      }
     }
 
     const unameForm = args.uname.replace(/[\s.,?&]/g, "_").toLowerCase().substring(0, 5);
@@ -1270,8 +1310,9 @@ export const createUserByAdmin = mutation({
       role: args.role,
       sadmin: args.role === "SUPER_ADMIN" ? 1 : 0,
       admin: isCompanyAdmin ? 1 : 0,
-      iscmpy: args.cmpyName ? 1 : 0,
-      cmpy: args.cmpyName,
+      iscmpy: cmpyNameVal ? 1 : 0,
+      cmpy: cmpyNameVal,
+      cmpyid: cmpyIdVal,
       uname: args.uname,
       fname: args.fname,
       lname: args.lname,
@@ -1435,8 +1476,26 @@ export const editUserByAdmin = mutation({
       if (dupMobile) throw new Error("Mobile number already exists");
     }
 
-    if (args.branchId && args.branchId !== userToEdit.branchId) {
-      await checkBranchUserLimit(ctx, args.branchId, args.userId);
+    const targetBranchId = args.branchId !== undefined ? args.branchId : userToEdit.branchId;
+    if (targetBranchId) {
+      await checkBranchUserLimit(ctx, targetBranchId, args.userId, args.active === 1);
+    }
+
+    let cmpyIdVal = userToEdit.cmpyid;
+    let cmpyNameVal = args.cmpyName || userToEdit.cmpy;
+    if (callerRole === "BRANCH_ADMIN") {
+      cmpyIdVal = caller._id.toString();
+      cmpyNameVal = cmpyNameVal || caller.cmpy;
+    } else if (args.branchId && args.branchId !== userToEdit.branchId) {
+      const branchUsers = await ctx.db
+        .query("users")
+        .withIndex("by_branchId", (q: any) => q.eq("branchId", args.branchId))
+        .collect();
+      const bOwner = branchUsers.find((u: any) => normalizeRole(u.role, u.sadmin, u.admin) === "BRANCH_ADMIN");
+      if (bOwner) {
+        cmpyIdVal = bOwner._id.toString();
+        cmpyNameVal = cmpyNameVal || bOwner.cmpy;
+      }
     }
 
     const updates: any = {
@@ -1450,8 +1509,9 @@ export const editUserByAdmin = mutation({
       branchId: args.branchId,
       sadmin: args.role === "SUPER_ADMIN" ? 1 : 0,
       admin: args.role === "BRANCH_ADMIN" ? 1 : 0,
-      iscmpy: args.cmpyName ? 1 : 0,
-      cmpy: args.cmpyName || undefined,
+      iscmpy: cmpyNameVal ? 1 : 0,
+      cmpy: cmpyNameVal || undefined,
+      cmpyid: cmpyIdVal,
     };
     await ctx.db.patch(args.userId, updates);
 
@@ -1549,6 +1609,84 @@ export const cleanupDuplicateAuthAccounts = mutation({
       }
     }
     return { success: true, deletedCount };
+  },
+});
+
+export const upgradeSubscription = mutation({
+  args: {
+    pricingPackageId: v.id("pricing"),
+  },
+  handler: async (ctx, args) => {
+    const caller = await validateUser(ctx);
+    enforceWriteAccess(caller);
+
+    const newPkg = await ctx.db.get(args.pricingPackageId);
+    if (!newPkg || newPkg.status !== "active") {
+      throw new Error("Invalid pricing package selected");
+    }
+
+    const owner = await getAccountOwner(ctx, caller);
+
+    if (caller._id !== owner._id) {
+      throw new Error("Only the company admin can upgrade the subscription plan");
+    }
+
+    // Set new pricing plan and status
+    await ctx.db.patch(owner._id, {
+      pricingPackageId: newPkg._id,
+      sub: 1, // Activate subscription immediately for upgrade
+    });
+
+    // Update quota record for the owner
+    const quota = await ctx.db
+      .query("quota")
+      .withIndex("by_userId", (q) => q.eq("byUserId", owner._id))
+      .first();
+
+    const nameLower = newPkg.packageName.toLowerCase();
+    let smsQuota = 0;
+    let emailQuota = 0;
+    let whatsappQuota = 0;
+    let webQuota = 0;
+    
+    if (nameLower.includes("plus") || newPkg.price >= 9000) {
+      smsQuota = 20;
+      emailQuota = 20;
+      whatsappQuota = 20;
+      webQuota = 20;
+    } else if (nameLower.includes("premium") || nameLower.includes("gold") || newPkg.price >= 5000) {
+      smsQuota = 10;
+      emailQuota = 10;
+      whatsappQuota = 10;
+      webQuota = 10;
+    } else {
+      smsQuota = 0;
+      emailQuota = 5;
+      whatsappQuota = 5;
+      webQuota = 5;
+    }
+
+    if (quota) {
+      await ctx.db.patch(quota._id, {
+        smsQuota: quota.smsQuota + smsQuota,
+        emailQuota: quota.emailQuota + emailQuota,
+        whatsappQuota: quota.whatsappQuota + whatsappQuota,
+        webQuota: quota.webQuota + webQuota,
+        amount: newPkg.price,
+        balance: 0,
+      });
+    }
+
+    // Log action
+    await ctx.db.insert("activity", {
+      userId: owner._id,
+      actionType: "UPGRADE_PLAN",
+      msg: `Upgraded subscription to plan [ ${newPkg.packageName} ]`,
+      actTime: new Date().toUTCString(),
+      branchId: owner.branchId,
+    });
+
+    return { success: true };
   },
 });
 

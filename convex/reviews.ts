@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { validateUser, enforceRoles, enforceWriteAccess, getBranchFilterId, enforceBranchAccess, getAccountOwner, enforceActiveSubscriptionOrTrial } from "./authHelpers";
+import { Id } from "./_generated/dataModel";
 
 // Platform Queries & Mutations
 export const getWebsites = query({
@@ -494,12 +495,46 @@ export const getDashboardData = query({
       return { month: name, count };
     });
 
+    // Plan & Seat Usage calculations
+    const branch = branchId ? await ctx.db.get(branchId) : null;
+    const pkgId = (branch?.pricingPackageId || owner.pricingPackageId) as Id<"pricing"> | undefined;
+    const pkg = pkgId ? await ctx.db.get(pkgId) : null;
+
+    const maxUsers = pkg?.maxUsers ?? 0;
+    const planName = pkg?.packageName || "Trial / Default Plan";
+
+    let usedUsers = 0;
+    if (owner) {
+      const ownerIdStr = owner._id.toString();
+      const allUsers = await ctx.db.query("users").collect();
+      const activeCompanyUsers = allUsers.filter((u: any) => {
+        if (u.active !== 1) return false;
+        const isOwner = u._id === owner._id;
+        const isChildOfOwner = u.cmpyid === ownerIdStr;
+        return isOwner || isChildOfOwner;
+      });
+      usedUsers = activeCompanyUsers.length;
+    } else {
+      if (branchId) {
+        const users = await ctx.db
+          .query("users")
+          .withIndex("by_branchId", (q: any) => q.eq("branchId", branchId))
+          .collect();
+        usedUsers = users.filter((u: any) => u.active === 1).length;
+      }
+    }
+
     return {
       totalReviews,
       averageRating,
       starDistribution,
       platformSummary,
       recentReviews,
+      currentPlanName: planName,
+      userUsage: {
+        used: usedUsers,
+        max: maxUsers,
+      },
       quota: quotaRecord ? {
         smsQuota: quotaRecord.smsQuota,
         emailQuota: quotaRecord.emailQuota,

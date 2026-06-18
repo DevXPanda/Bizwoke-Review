@@ -139,6 +139,8 @@ export default function DashboardPage() {
     quota,
     user,
     monthlyRatings,
+    currentPlanName,
+    userUsage,
   } = data;
 
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
@@ -348,6 +350,63 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Plan & Seat Usage Summary */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 bg-gradient-to-br from-slate-50 to-blue-50/20 p-5 rounded-2xl border border-gray-250/50 shadow-sm">
+        <div className="p-4 bg-white rounded-xl border border-gray-150 shadow-inner hover:shadow transition-shadow">
+          <span className="block text-gray-400 text-[10px] uppercase font-bold tracking-wider">Subscribed Plan</span>
+          <strong className="text-[#294a63] text-base font-extrabold block mt-1 truncate" title={currentPlanName}>{currentPlanName}</strong>
+          <span className="text-[9px] text-gray-400 block mt-0.5">Active billing plan</span>
+        </div>
+
+        <div className="p-4 bg-white rounded-xl border border-gray-150 shadow-inner hover:shadow transition-shadow">
+          <span className="block text-gray-400 text-[10px] uppercase font-bold tracking-wider">Active User Seats</span>
+          <div className="flex items-baseline space-x-1 mt-1">
+            <strong className="text-gray-800 text-base font-extrabold">{userUsage?.used ?? 0}</strong>
+            <span className="text-gray-400 text-xs font-semibold">/ {userUsage?.max ?? "Unlimited"} seats</span>
+          </div>
+          {userUsage?.max ? (
+            <div className="w-full bg-gray-100 rounded-full h-1 mt-1.5 overflow-hidden">
+              <div 
+                className="bg-[#294a63] h-1 rounded-full transition-all duration-550"
+                style={{ width: `${Math.min(((userUsage.used) / userUsage.max) * 100, 100)}%` }}
+              ></div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="p-4 bg-white rounded-xl border border-gray-150 shadow-inner hover:shadow transition-shadow">
+          <span className="block text-gray-400 text-[10px] uppercase font-bold tracking-wider">Trial / Account Status</span>
+          <strong className="text-gray-800 text-xs font-bold block mt-1.5">
+            {user.trialStatus === "active" && user.trialEndDate && Date.now() <= user.trialEndDate ? (
+              <span className="inline-flex items-center px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-bold rounded border border-amber-200">
+                Trial Active ({timeLeft || "Calculating..."})
+              </span>
+            ) : user.trialStatus === "active" ? (
+              <span className="inline-flex items-center px-2 py-0.5 bg-red-50 text-red-700 text-[10px] font-bold rounded border border-red-200">
+                Trial Expired
+              </span>
+            ) : user.sub === 1 ? (
+              <span className="inline-flex items-center px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold rounded border border-emerald-200">
+                Active Subscriber
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-2 py-0.5 bg-gray-50 text-gray-500 text-[10px] font-bold rounded border border-gray-250">
+                No active plan
+              </span>
+            )}
+          </strong>
+          <span className="text-[9px] text-gray-400 block mt-0.5">Billing lifecycle status</span>
+        </div>
+
+        <div className="p-4 bg-white rounded-xl border border-gray-150 shadow-inner hover:shadow transition-shadow">
+          <span className="block text-gray-400 text-[10px] uppercase font-bold tracking-wider">Combined Quota Credits</span>
+          <strong className="text-gray-800 text-base font-extrabold block mt-1">
+            {quota ? (quota.smsQuota || 0) + (quota.emailQuota || 0) + (quota.whatsappQuota || 0) + (quota.webQuota || 0) : 0}
+          </strong>
+          <span className="text-[9px] text-gray-400 block mt-0.5">Remaining messages balance</span>
+        </div>
+      </div>
 
       {/* Stats Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

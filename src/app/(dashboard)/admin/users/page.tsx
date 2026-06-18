@@ -47,6 +47,7 @@ export default function AdminUsersPage() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editUserId, setEditUserId] = useState<Id<"users"> | null>(null);
   const [resetUserId, setResetUserId] = useState<Id<"users"> | null>(null);
+  const [isUpgradeOpen, setIsUpgradeOpen] = useState(false);
 
   const handleSavedNotify = (msg: string) => {
     setSuccessMsg(msg);
@@ -99,7 +100,11 @@ export default function AdminUsersPage() {
       await activateMutation({ userId });
       setSuccessMsg("User activated");
     } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : "Error");
+      const msg = err instanceof Error ? err.message : "Error";
+      setErrorMsg(msg);
+      if (msg.includes("UserLimitExceeded")) {
+        setIsUpgradeOpen(true);
+      }
     }
   };
 
@@ -263,6 +268,7 @@ export default function AdminUsersPage() {
         callerBranchId={user?.branchId}
         branches={branches}
         onSaved={handleSavedNotify}
+        onLimitExceeded={() => setIsUpgradeOpen(true)}
       />
 
       {/* Edit User Modal overlay */}
@@ -274,6 +280,17 @@ export default function AdminUsersPage() {
         callerBranchId={user?.branchId}
         branches={branches}
         onSaved={handleSavedNotify}
+        onLimitExceeded={() => setIsUpgradeOpen(true)}
+      />
+
+      {/* Upgrade Subscription Modal overlay */}
+      <UpgradeSubscriptionModal
+        isOpen={isUpgradeOpen}
+        onClose={() => setIsUpgradeOpen(false)}
+        onUpgraded={() => {
+          handleSavedNotify("Subscription upgraded successfully!");
+          setIsUpgradeOpen(false);
+        }}
       />
 
       {/* Reset Password Modal overlay */}
@@ -895,6 +912,148 @@ function UserDetailDrawer({ userId, onClose }: UserDetailDrawerProps) {
 // ==========================================
 // Add User Modal Component
 // ==========================================
+// ==========================================
+// Upgrade Subscription Modal Component
+// ==========================================
+interface UpgradeSubscriptionModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onUpgraded: () => void;
+}
+
+function UpgradeSubscriptionModal({ isOpen, onClose, onUpgraded }: UpgradeSubscriptionModalProps) {
+  const packages = useQuery(api.pricing.getPricingPackages);
+  const upgradeMutation = useMutation(api.users.upgradeSubscription);
+
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!isOpen) return null;
+
+  const handleUpgrade = async (packageId: Id<"pricing">, packageName: string) => {
+    setError(null);
+    setLoadingId(packageId);
+    try {
+      await upgradeMutation({ pricingPackageId: packageId });
+      onUpgraded();
+    } catch (err: any) {
+      setError(err.message || "Failed to upgrade subscription");
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+  const activePackages = packages?.filter((p) => p.status === "active").sort((a, b) => a.displayOrder - b.displayOrder) || [];
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[60] flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl border border-gray-150 flex flex-col my-8 animate-scale-in overflow-hidden">
+        {/* Header */}
+        <div className="bg-[#294a63] text-white p-6 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-extrabold flex items-center space-x-2.5">
+              <CreditCard className="w-6 h-6 animate-pulse" />
+              <span>Upgrade Subscription Plan</span>
+            </h2>
+            <p className="text-xs text-blue-155 mt-1">Unlock more user seats and raise your monthly credit limits</p>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-full transition-colors text-white">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 space-y-6 overflow-y-auto max-h-[70vh]">
+          {error && (
+            <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg text-xs text-red-707 flex items-center space-x-2">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="text-center max-w-md mx-auto space-y-2 mb-2">
+            <h3 className="text-lg font-bold text-gray-850">Choose a higher-tier package</h3>
+            <p className="text-xs text-gray-500">You have reached the maximum number of active seats for your current plan. Upgrade now to scale your business operations instantly.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {activePackages.map((p) => (
+              <div
+                key={p._id}
+                className={`bg-white rounded-2xl border p-5 flex flex-col justify-between transition-all duration-300 relative shadow-sm hover:shadow-md ${
+                  p.popularBadge
+                    ? "border-[#294a63] ring-1 ring-[#294a63] scale-[1.02] md:scale-105"
+                    : "border-gray-200 hover:border-gray-300"
+                }`}
+              >
+                {p.popularBadge && (
+                  <span className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-[#294a63] text-white px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider shadow">
+                    Most Popular
+                  </span>
+                )}
+
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <h4 className="font-extrabold text-gray-800 text-sm tracking-wide">{p.packageName}</h4>
+                    <span className="text-[10px] text-gray-400 block mt-0.5 uppercase tracking-wider">{p.category}</span>
+                  </div>
+
+                  <div className="text-center py-2 bg-gray-50/50 rounded-xl border border-gray-100">
+                    <div className="text-2xl font-black text-gray-900">
+                      ₹{p.price}
+                    </div>
+                    <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider">Per {p.billingType}</span>
+                  </div>
+
+                  <div className="py-2.5 px-3 bg-[#294a63]/5 rounded-xl border border-[#294a63]/10 text-center">
+                    <strong className="text-[#294a63] text-sm block">{p.maxUsers} Active Seats</strong>
+                    <span className="text-[9px] text-gray-400">Total staff user accounts</span>
+                  </div>
+
+                  <ul className="text-xs text-gray-655 space-y-2 pt-2 divide-y divide-gray-50">
+                    {p.featuresList.map((feature, i) => (
+                      <li key={i} className="pt-1.5 flex items-center space-x-1.5 truncate" title={feature}>
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                        <span>{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <button
+                  onClick={() => handleUpgrade(p._id, p.packageName)}
+                  disabled={loadingId !== null}
+                  className={`mt-6 w-full py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center space-x-2 ${
+                    p.popularBadge
+                      ? "bg-[#294a63] hover:bg-opacity-95 text-white"
+                      : "bg-white border border-[#294a63] text-[#294a63] hover:bg-[#294a63] hover:text-white"
+                  }`}
+                >
+                  {loadingId === p._id ? (
+                    <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current"></div>
+                  ) : (
+                    <span>Choose Plan</span>
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="bg-gray-50 p-4 border-t flex justify-end space-x-3">
+          <button
+            onClick={onClose}
+            className="px-5 py-2.5 bg-white border border-gray-200 text-xs font-semibold text-gray-700 rounded-xl hover:bg-gray-50 transition-colors shadow-sm"
+          >
+            Cancel & Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface AddUserModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -902,6 +1061,7 @@ interface AddUserModalProps {
   callerBranchId?: string;
   branches?: any[];
   onSaved: (msg: string) => void;
+  onLimitExceeded: () => void;
 }
 
 function AddUserModal({
@@ -911,6 +1071,7 @@ function AddUserModal({
   callerBranchId,
   branches,
   onSaved,
+  onLimitExceeded,
 }: AddUserModalProps) {
   const createUserMutation = useMutation(api.users.createUserByAdmin);
 
@@ -998,6 +1159,10 @@ function AddUserModal({
       onClose();
     } catch (err: any) {
       setError(err.message || "Failed to create user");
+      if (err.message?.includes("UserLimitExceeded")) {
+        onClose();
+        onLimitExceeded();
+      }
     } finally {
       setLoading(false);
     }
@@ -1247,6 +1412,7 @@ interface EditUserModalProps {
   callerBranchId?: string;
   branches?: any[];
   onSaved: (msg: string) => void;
+  onLimitExceeded: () => void;
 }
 
 function EditUserModal({
@@ -1257,6 +1423,7 @@ function EditUserModal({
   callerBranchId,
   branches,
   onSaved,
+  onLimitExceeded,
 }: EditUserModalProps) {
   const details = useQuery(api.users.getAdminUserDetail, userId ? { userId } : "skip");
   const editUserMutation = useMutation(api.users.editUserByAdmin);
@@ -1339,6 +1506,10 @@ function EditUserModal({
       onClose();
     } catch (err: any) {
       setError(err.message || "Failed to update user");
+      if (err.message?.includes("UserLimitExceeded")) {
+        onClose();
+        onLimitExceeded();
+      }
     } finally {
       setLoading(false);
     }
