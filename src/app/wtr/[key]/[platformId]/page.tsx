@@ -28,6 +28,8 @@ export default function ReviewFormPage() {
   const companyBranding = useQuery(api.companies.getCompanyBrandingByFormKey, { formKey });
   
   const saveRatingMutation = useMutation(api.reviews.saveRating);
+  const activeQuestions = useQuery(api.surveys.getActiveQuestions);
+  const submitSurveyMutation = useMutation(api.surveys.submitSurvey);
 
   // States
   const [selectedStar, setSelectedStar] = useState<number | null>(null);
@@ -44,6 +46,11 @@ export default function ReviewFormPage() {
   // Gating & Clipboard redirection states
   const [countdown, setCountdown] = useState<number | null>(null);
   const [clipboardCopied, setClipboardCopied] = useState(false);
+
+  // Multi-step survey states
+  const [step, setStep] = useState(1);
+  const [ratingId, setRatingId] = useState<Id<"ratings"> | null>(null);
+  const [surveyScores, setSurveyScores] = useState<Record<string, number>>({});
 
   useEffect(() => {
     fetch("https://api.ipify.org?format=json")
@@ -118,6 +125,31 @@ export default function ReviewFormPage() {
     setValidationError(null);
   };
 
+  const handleCompletion = async (rId: Id<"ratings">) => {
+    setSuccessMsg("Thanks for your review!");
+    
+    // Star Gating Redirection Behavior (4-5 stars redirect, 1-3 stars stay)
+    if (selectedStar !== null && selectedStar > 3) {
+      let link = platform.webLink;
+      if (!/^https?:\/\//i.test(link)) {
+        link = `https://${link}`;
+      }
+
+      // Copy review text to clipboard automatically
+      if (review.trim()) {
+        try {
+          await navigator.clipboard.writeText(review.trim());
+          setClipboardCopied(true);
+        } catch (clipErr) {
+          console.error("Clipboard copy failed:", clipErr);
+        }
+      }
+
+      // Start countdown
+      setCountdown(4);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -135,7 +167,7 @@ export default function ReviewFormPage() {
 
     setLoading(true);
     try {
-      await saveRatingMutation({
+      const result = await saveRatingMutation({
         userIp,
         formKey,
         webId: platformId as Id<"websites">,
@@ -147,33 +179,54 @@ export default function ReviewFormPage() {
         webLink: platform.webLink,
       });
 
-      setSuccessMsg("Thanks for your review!");
-      
-      // Star Gating Redirection Behavior (4-5 stars redirect, 1-3 stars stay)
-      if (selectedStar > 3) {
-        let link = platform.webLink;
-        if (!/^https?:\/\//i.test(link)) {
-          link = `https://${link}`;
-        }
+      setRatingId(result.ratingId);
 
-        // Copy review text to clipboard automatically
-        if (review.trim()) {
-          try {
-            await navigator.clipboard.writeText(review.trim());
-            setClipboardCopied(true);
-          } catch (clipErr) {
-            console.error("Clipboard copy failed:", clipErr);
-          }
-        }
-
-        // Start countdown
-        setCountdown(4);
+      // If active survey questions exist, route to Step 2
+      if (result.hasActiveQuestions) {
+        setStep(2);
       } else {
-        // Ratings 1-3: Save locally only, show thank you message, no external redirect
+        await handleCompletion(result.ratingId);
       }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : "Error saving feedback";
       setErrorMsg(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSurveySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setValidationError(null);
+
+    if (!ratingId) {
+      setValidationError("No rating session found. Please refresh.");
+      return;
+    }
+
+    // Validate that all questions are answered
+    const unanswered = (activeQuestions || []).filter((q) => !surveyScores[q._id]);
+    if (unanswered.length > 0) {
+      setValidationError("Please answer all survey questions before submitting.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const answersPayload = Object.entries(surveyScores).map(([qId, score]) => ({
+        questionId: qId as Id<"surveyQuestions">,
+        score,
+      }));
+
+      await submitSurveyMutation({
+        ratingId,
+        answers: answersPayload,
+      });
+
+      await handleCompletion(ratingId);
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : "Error submitting survey responses");
     } finally {
       setLoading(false);
     }
@@ -318,93 +371,162 @@ export default function ReviewFormPage() {
           )}
 
           <div className="space-y-6">
-            {/* Stars Interface */}
-            <div className="flex justify-center space-x-2 py-4 border-b border-gray-100">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  onClick={() => handleRatingClick(star)}
-                  type="button"
-                  className="focus:outline-none hover:scale-110 transition-transform"
-                >
-                  <Star 
-                    className={`w-10 h-10 ${
-                      selectedStar !== null && star <= selectedStar 
-                        ? "text-amber-400 fill-amber-400" 
-                        : "text-gray-300"
-                    }`} 
-                  />
-                </button>
-              ))}
-            </div>
+            {step === 1 && (
+              <>
+                {/* Stars Interface */}
+                <div className="flex justify-center space-x-2 py-4 border-b border-gray-100">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      onClick={() => handleRatingClick(star)}
+                      type="button"
+                      className="focus:outline-none hover:scale-110 transition-transform"
+                    >
+                      <Star 
+                        className={`w-10 h-10 ${
+                          selectedStar !== null && star <= selectedStar 
+                            ? "text-amber-400 fill-amber-400" 
+                            : "text-gray-300"
+                        }`} 
+                      />
+                    </button>
+                  ))}
+                </div>
 
-            {/* Emotion description panel */}
-            {renderEmotion()}
+                {/* Emotion description panel */}
+                {renderEmotion()}
 
-            {/* Feedback Detail Fields */}
-            {selectedStar !== null && (
-              <form onSubmit={handleSubmit} className="space-y-6 pt-4 border-t border-gray-100 animate-fade-in">
+                {/* Feedback Detail Fields */}
+                {selectedStar !== null && (
+                  <form onSubmit={handleSubmit} className="space-y-6 pt-4 border-t border-gray-100 animate-fade-in">
+                    {validationError && (
+                      <div className="text-xs font-semibold text-red-500 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
+                        {validationError}
+                      </div>
+                    )}
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700">
+                          Name <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Your Name"
+                          value={name}
+                          onChange={(e) => setName(e.target.value)}
+                          className="mt-1.5 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-[#294a63] focus:border-[#294a63] sm:text-sm"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700">
+                          Mobile <span className="text-red-500">*</span>
+                        </label>
+                        <div className="mt-1.5 relative rounded-lg shadow-sm">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <span className="text-gray-500 sm:text-sm">+91</span>
+                          </div>
+                          <input
+                            type="number"
+                            required
+                            placeholder="Your Mobile"
+                            value={mobile}
+                            onChange={(e) => setMobile(e.target.value)}
+                            className="block w-full pl-12 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#294a63] focus:border-[#294a63] sm:text-sm"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700">
+                        Review <span className="text-xs text-gray-400 font-medium">(optional)</span>
+                      </label>
+                      <textarea
+                        rows={3}
+                        placeholder="Your review..."
+                        value={review}
+                        onChange={(e) => setReview(e.target.value)}
+                        className="mt-1.5 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-[#294a63] focus:border-[#294a63] sm:text-sm"
+                      />
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-lg text-white bg-[#294a63] hover:bg-opacity-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#294a63] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                      >
+                        {loading ? "Saving..." : "Submit"}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </>
+            )}
+
+            {step === 2 && (
+              <form onSubmit={handleSurveySubmit} className="space-y-6 pt-4 animate-fade-in">
+                <div className="text-center mb-4">
+                  <h3 className="text-lg font-bold text-gray-800">Customer Satisfaction Sheet</h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Using the satisfaction scale, select a rating from 1 to 5 for each question.
+                  </p>
+                  <div className="flex flex-wrap justify-center gap-3 mt-3 text-[10px] text-gray-500 font-semibold bg-gray-50 p-2 rounded-lg border border-gray-100">
+                    <span>😠 1 = Poor</span>
+                    <span>😐 2 = Fair</span>
+                    <span>🙂 3 = Good</span>
+                    <span>😀 4 = Very Good</span>
+                    <span>🤩 5 = WOW!!</span>
+                  </div>
+                </div>
+
                 {validationError && (
                   <div className="text-xs font-semibold text-red-500 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
                     {validationError}
                   </div>
                 )}
-                
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700">
-                      Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Your Name"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      className="mt-1.5 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-[#294a63] focus:border-[#294a63] sm:text-sm"
-                    />
-                  </div>
 
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700">
-                      Mobile <span className="text-red-500">*</span>
-                    </label>
-                    <div className="mt-1.5 relative rounded-lg shadow-sm">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <span className="text-gray-500 sm:text-sm">+91</span>
+                <div className="space-y-5">
+                  {(activeQuestions || []).map((q) => (
+                    <div key={q._id} className="space-y-2 pb-3 border-b border-gray-100 last:border-b-0">
+                      <label className="block text-sm font-semibold text-gray-700">
+                        {q.questionText}
+                      </label>
+                      <div className="flex items-center justify-between gap-1.5">
+                        {[1, 2, 3, 4, 5].map((score) => {
+                          const isSelected = surveyScores[q._id] === score;
+                          const scoreEmojis = ["😠", "😐", "🙂", "😀", "🤩"];
+                          return (
+                            <button
+                              key={score}
+                              type="button"
+                              onClick={() => setSurveyScores((prev) => ({ ...prev, [q._id]: score }))}
+                              className={`flex-1 py-2 px-1 rounded-lg border text-xs font-semibold flex flex-col items-center justify-center transition-all ${
+                                isSelected
+                                  ? "bg-[#294a63] text-white border-[#294a63] scale-105 shadow-sm"
+                                  : "bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100"
+                              }`}
+                            >
+                              <span className="text-lg mb-0.5">{scoreEmojis[score - 1]}</span>
+                              <span>{score}</span>
+                            </button>
+                          );
+                        })}
                       </div>
-                      <input
-                        type="number"
-                        required
-                        placeholder="Your Mobile"
-                        value={mobile}
-                        onChange={(e) => setMobile(e.target.value)}
-                        className="block w-full pl-12 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#294a63] focus:border-[#294a63] sm:text-sm"
-                      />
                     </div>
-                  </div>
+                  ))}
                 </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700">
-                    Review <span className="text-xs text-gray-400 font-medium">(optional)</span>
-                  </label>
-                  <textarea
-                    rows={3}
-                    placeholder="Your review..."
-                    value={review}
-                    onChange={(e) => setReview(e.target.value)}
-                    className="mt-1.5 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-[#294a63] focus:border-[#294a63] sm:text-sm"
-                  />
-                </div>
-
-                <div className="flex justify-end">
+                <div className="flex justify-end pt-3">
                   <button
                     type="submit"
                     disabled={loading}
                     className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-lg text-white bg-[#294a63] hover:bg-opacity-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#294a63] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
-                    {loading ? "Saving..." : "Submit"}
+                    {loading ? "Submitting..." : "Submit Survey"}
                   </button>
                 </div>
               </form>

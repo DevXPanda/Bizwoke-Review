@@ -86,6 +86,7 @@ export default defineSchema({
     webLink: v.string(),
     formKey: v.string(), // references users.formKey
     branchId: v.optional(v.id("branches")),
+    surveyCompleted: v.optional(v.boolean()),
   })
     .index("by_formKey", ["formKey"])
     .index("by_branchId", ["branchId"])
@@ -222,4 +223,20 @@ export default defineSchema({
   })
     .index("by_status", ["status"])
     .index("by_displayOrder", ["displayOrder"]),
+
+  surveyQuestions: defineTable({
+    questionText: v.string(),
+    orderBy: v.number(),
+    active: v.number(), // 1 = Active, 0 = Inactive
+  }),
+
+  surveyAnswers: defineTable({
+    ratingId: v.id("ratings"),
+    questionId: v.id("surveyQuestions"),
+    score: v.number(), // 1 to 5
+    branchId: v.optional(v.id("branches")),
+  })
+    .index("by_ratingId", ["ratingId"])
+    .index("by_questionId", ["questionId"])
+    .index("by_branchId", ["branchId"]),
 });

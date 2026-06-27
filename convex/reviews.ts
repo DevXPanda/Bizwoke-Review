@@ -267,8 +267,30 @@ export const saveRating = mutation({
     }
     const branchId = user?.branchId;
 
+    // Auto-seed default survey questions if they don't exist yet
+    const existingQuestions = await ctx.db.query("surveyQuestions").collect();
+    if (existingQuestions.length === 0) {
+      const defaultQuestions = [
+        "Did our food satisfy your taste buds?.",
+        "Did you enjoy the beverages?.",
+        "Did we take your order on time?.",
+        "Did we serve you on time?.",
+        "Were our staff member friendly?..",
+        "Do you like our restaurant?....",
+        "Do you like our menu selections/variety?.",
+        "We care-did it show?.",
+      ];
+      for (let i = 0; i < defaultQuestions.length; i++) {
+        await ctx.db.insert("surveyQuestions", {
+          questionText: defaultQuestions[i],
+          orderBy: i + 1,
+          active: 1,
+        });
+      }
+    }
+
     // 1. Insert review
-    await ctx.db.insert("ratings", {
+    const ratingId = await ctx.db.insert("ratings", {
       userIp: args.userIp,
       star: args.star,
       review: args.review || "",
@@ -278,6 +300,7 @@ export const saveRating = mutation({
       webLink: args.webLink,
       formKey: args.formKey,
       branchId,
+      surveyCompleted: false,
     });
 
     // 2. Increment platform review count
@@ -297,7 +320,14 @@ export const saveRating = mutation({
       branchId,
     });
 
-    return true;
+    // Resolve if active questions exist
+    const activeQuestionsList = await ctx.db.query("surveyQuestions").collect();
+    const hasActiveQuestions = activeQuestionsList.some(q => q.active === 1);
+
+    return {
+      ratingId,
+      hasActiveQuestions,
+    };
   },
 });
 

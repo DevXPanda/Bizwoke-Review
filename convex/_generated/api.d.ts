@@ -21,6 +21,7 @@ import type * as quota from "../quota.js";
 import type * as razorpay from "../razorpay.js";
 import type * as reviews from "../reviews.js";
 import type * as settings from "../settings.js";
+import type * as surveys from "../surveys.js";
 import type * as transactions from "../transactions.js";
 import type * as users from "../users.js";
 
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   razorpay: typeof razorpay;
   reviews: typeof reviews;
   settings: typeof settings;
+  surveys: typeof surveys;
   transactions: typeof transactions;
   users: typeof users;
 }>;
